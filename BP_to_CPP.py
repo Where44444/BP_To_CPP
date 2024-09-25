@@ -40,13 +40,8 @@ postReplacements = {
 }
 
 postRegexReplacements = {
-    #Fixes wrong order of pins to C++ FTransform constructor
-    # r"FTransform\(FVector(.*?)FRotator(.*?)FVector" : r"FTransform(FRotator\2FVector\1FVector",
-    #Fixes wrong order of FRotator params, from |Roll, Pitch, Yaw| -> |Pitch, Yaw, Roll|
-    # r"FRotator\((.*?),(.*?),(.*?)\)" : r"FRotator(\2,\3, \1)",
     #Fixes wrong order of pins to C++ AttachToComponent function, also adds FAttachmentTransformRules constructor
     r"AttachToComponent\((.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?)\)" : r"AttachToComponent(\1, FAttachmentTransformRules(\3,\4,\5,\6), \2)",
-    r"W4::GetAssetUserData\((.*?), UW4AssetData::StaticClass\(\)\);" : r"Cast<UW4AssetData>(W4::GetAssetUserData(\1, UW4AssetData::StaticClass()));",
     r"FLinearColor\(\(R=(.*?)G=(.*?)B=(.*?)A=(.*?)\)" : r"FLinearColor(\1\2\3\4)",
     r"FVector2D\(\(X=(.*?)Y=(.*?)\)\)" : r"FVector2D(\1\2)",
 }
@@ -66,9 +61,8 @@ memberNameReplacements = {
 }
 
 memberParentsToUse = {
-    "W4_Funcs_Pure" : "W4",
-    "KismetSystemLibrary" : "KS",
-    "KismetMathLibrary" : "KM",
+    "KismetSystemLibrary" : "UKismetSystemLibrary",
+    "KismetMathLibrary" : "UKismetMathLibrary",
     "BlueprintMapLibrary" : "UBlueprintMapLibrary",
     "KismetMaterialLibrary" : "UKismetMaterialLibrary",
     "GameplayStatics" : "UGameplayStatics",
@@ -140,8 +134,6 @@ functionFormat = { #Pin, Operand, Pin, Operand, Pin, Operand, Pin, Operand, ...
     "Set_Clear" : ["TargetSet", ".Reset()"],
     "Set_Add" : ["TargetSet", ".Add(", "NewItem", ")"],
     "Set_ToArray" : ["Result", " = ", "A", ".Array()"],
-    "W4_Macros_Object:Multiply Int Vector" : ["Out", " = (", "Vec1", " * ", "Vec2", ")"],
-    "W4_Macros_Object:GetPosOrNeg" : ["B", " = ", "A", " > 0 ? 1 : -1"],
     "MakeVector" : ["ReturnValue", " = FVector(", "X", ", ", "Y", ", ", "Z", ")"],
     "Conv_TextToString" : ["ReturnValue", " = ", "InText", ".ToString()"],
     "NotEqual_StrStr" : ["ReturnValue", " = !(", "A", ".Equals(", "B", "))"],
