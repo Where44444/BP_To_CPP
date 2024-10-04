@@ -21,11 +21,11 @@ variablesCategory = "Scanner" #TODO Implement this
 className = "AW4Database_Funcs"
 
 #Overriden if the blueprint code is a function graph
-#Can also be overriden by adding a comment to the start node of your bp graph
+#Can also be overridden by adding a comment to the first line of the start node of your bp graph
 functionName = "ScannerTick" 
 
 #Used for directly adding variables inline, if the variable is only declared and used once
-flattenCode = True
+flattenCode = False
 
 debug = False
 errorTrace = False
@@ -40,8 +40,13 @@ postReplacements = {
 }
 
 postRegexReplacements = {
+    #Fixes wrong order of pins to C++ FTransform constructor
+    # r"FTransform\(FVector(.*?)FRotator(.*?)FVector" : r"FTransform(FRotator\2FVector\1FVector",
+    #Fixes wrong order of FRotator params, from |Roll, Pitch, Yaw| -> |Pitch, Yaw, Roll|
+    # r"FRotator\((.*?),(.*?),(.*?)\)" : r"FRotator(\2,\3, \1)",
     #Fixes wrong order of pins to C++ AttachToComponent function, also adds FAttachmentTransformRules constructor
     r"AttachToComponent\((.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?)\)" : r"AttachToComponent(\1, FAttachmentTransformRules(\3,\4,\5,\6), \2)",
+    r"W4::GetAssetUserData\((.*?), UW4AssetData::StaticClass\(\)\);" : r"Cast<UW4AssetData>(W4::GetAssetUserData(\1, UW4AssetData::StaticClass()));",
     r"FLinearColor\(\(R=(.*?)G=(.*?)B=(.*?)A=(.*?)\)" : r"FLinearColor(\1\2\3\4)",
     r"FVector2D\(\(X=(.*?)Y=(.*?)\)\)" : r"FVector2D(\1\2)",
 }
@@ -58,11 +63,14 @@ memberNameReplacements = {
     "K2_SetRelativeRotation" : "SetRelativeRotation",
     "K2_GetComponentLocation" : "GetComponentLocation",
     "K2_GetComponentToWorld" : "GetComponentTransform",
+    "K2_GetComponentScale" : "GetComponentScale",
+    "K2_SetActorLocation" : "SetActorLocation",
 }
 
 memberParentsToUse = {
-    "KismetSystemLibrary" : "UKismetSystemLibrary",
-    "KismetMathLibrary" : "UKismetMathLibrary",
+    "W4_Funcs_Pure" : "W4",
+    "KismetSystemLibrary" : "KS",
+    "KismetMathLibrary" : "KM",
     "BlueprintMapLibrary" : "UBlueprintMapLibrary",
     "KismetMaterialLibrary" : "UKismetMaterialLibrary",
     "GameplayStatics" : "UGameplayStatics",
@@ -129,17 +137,24 @@ functionFormat = { #Pin, Operand, Pin, Operand, Pin, Operand, Pin, Operand, ...
     "Map_Find" : ["Value", " = ", "TargetMap", "[", "Key", "]"],
     "Map_Keys" : ["TargetMap", ".GetKeys(", "Keys", ")"],
     "Map_Clear" : ["TargetMap", ".Reset()"],
+    "Array_Length" : ["ReturnValue", " = ", "TargetArray", ".Num()"],
+    "Array_Add" : ["TargetArray", ".Add(", "NewItem", ")"],
+    "Array_Clear" : ["TargetArray", ".Reset()"],
+    "Array_Set" : ["TargetArray", "[", "Index", "] = ", "Item"],
     "Set_Length" : ["ReturnValue", " = ", "TargetSet", ".Num()"],
     "Set_Contains" : ["ReturnValue", " = ", "TargetSet", ".Contains(", "ItemToFind", ")"],
     "Set_Clear" : ["TargetSet", ".Reset()"],
     "Set_Add" : ["TargetSet", ".Add(", "NewItem", ")"],
     "Set_ToArray" : ["Result", " = ", "A", ".Array()"],
+    "W4_Macros_Object:Multiply Int Vector" : ["Out", " = (", "Vec1", " * ", "Vec2", ")"],
+    "W4_Macros_Object:GetPosOrNeg" : ["B", " = ", "A", " > 0 ? 1 : -1"],
     "MakeVector" : ["ReturnValue", " = FVector(", "X", ", ", "Y", ", ", "Z", ")"],
     "Conv_TextToString" : ["ReturnValue", " = ", "InText", ".ToString()"],
     "NotEqual_StrStr" : ["ReturnValue", " = !(", "A", ".Equals(", "B", "))"],
     "NotEqual_ObjectObject" : ["ReturnValue", " = (", "A", " != ", "B", ")"],
     "Equal_StrStr" : ["ReturnValue", " = ", "A", ".Equals(", "B", ")"],
-    "GetSubstring" : ["ReturnValue", " = ", "SourceString", ".Mid(", "StartIndex", ", ", "Length", ")"]
+    "GetSubstring" : ["ReturnValue", " = ", "SourceString", ".Mid(", "StartIndex", ", ", "Length", ")"],
+    "Conv_StringToName" : ["ReturnValue", " = FName(", "InString", ")"]
 }
 
 SubPinGetters = {
@@ -149,9 +164,20 @@ SubPinGetters = {
                     }
 }
 
+#Prioritizes Adding an A in front
+actorTypes = {
+    "PlayerCameraManager"
+}
+
+#Prioritizes Adding a U in front
+componentTypes = {
+
+}
+
 VariableGetsToFunctions = {
     "UStaticMeshComponent StaticMesh" : "GetStaticMesh()",
     "AActor RootComponent" : "GetRootComponent()",
+    "APlayerCameraManager TransformComponent" : "GetTransformComponent()",
 }
 
 class Variable():
@@ -209,9 +235,13 @@ Knot = 15
 FunctionResult = 16
 FunctionEntry = 17
 BreakStruct = 18
+Select = 19
 
 #Array Function Types:
 ArraySet = 1
+ArrayLength = 2
+ArrayAdd = 3
+ArrayClear = 4
 
 class PinConnection():
     def __init__(self):
@@ -410,6 +440,8 @@ def getDefaultValue(pin : Pin):
             pin.DefaultValue = struct[0] + cleanBP(lFind4("DefaultValue")) + struct[1]
         else:
             pin.DefaultValue = cleanBP(lFind4("DefaultValue"))
+    elif pin.ContainerType == "Array" or pin.ContainerType == "Set" or pin.ContainerType == "Map":
+        pin.DefaultValue = "{}"
     else:
         if pin.type == "FTransform":
             pin.DefaultValue = "FTransform::Identity"
@@ -435,7 +467,11 @@ def getTypeFromBP(bptype, objectTypeKeyword):
         return "exec"
     elif bptype == "object" and objectTypeKeyword:
         t = cleanBP(getDotSeparatedName(lFind(objectTypeKeyword)))
-        if t.lower().find("component") != -1:
+        if t in actorTypes:
+            return "A" + t
+        elif t in componentTypes:
+            return "U" + t
+        elif t.lower().find("component") != -1:
             return "U" + t
         elif t.lower().find("actor") != -1:
             return "A" + t
@@ -542,11 +578,12 @@ def lFind(key, *args):
         line = args[0]
     else:
         line = currentLine
+    errorLine = line
     index = line.find(key + "=")
     if index != -1:
         line = line[index:]
         return line.split("=", 1)[1].split(",")[0]
-    error(key + " not found on line " + str(inc) + "!")
+    error(key + " not found on line " + str(inc) + "!\n" + errorLine)
     return None
 
 #Used for finding array of connected pins
@@ -1226,6 +1263,8 @@ def resolveReferences(pin : Pin, *args):
                 operator = " && "
             elif node0.MemberName.find("BooleanOR") != -1:
                 operator = " || "
+            elif node0.MemberName.find("Concat_StrStr") != -1:
+                operator = " + "
             else:
                 error("Could not resolve math type! " + node0.MemberName + " | " + node0.Name)
             if debug:
@@ -1265,7 +1304,14 @@ def resolveReferences(pin : Pin, *args):
                 if debug:
                     code += "--Resolve Macro | Function Format--\n"
                 code += getFunctionFormat(node0, node0.MacroGraph)
-            elif node0.MacroGraph == "W4_Macros_Object:FloatCurve":
+            elif node0.MacroGraph == "W4_Macros_Object:FloatCurve" or node0.MacroGraph == "W4_Macros_Object:VectorCurve":
+                type0 = "float "
+                function0 = "W4::floatCurve("
+                function1 = "->GetFloatValue("
+                if node0.MacroGraph == "W4_Macros_Object:VectorCurve":
+                    type0 = "FVector "
+                    function0 = "W4::vectorCurve("
+                    function1 = "->GetVectorValue("
                 curvePin = node0.getPin("Curve")
                 timePin = node0.getPin("Time")
                 resultPin = node0.getPin("Result")
@@ -1273,17 +1319,17 @@ def resolveReferences(pin : Pin, *args):
                 code += resolveReferences(curvePin)
                 code += resolveReferences(timePin)
                 if debug:
-                    code += "--Resolve Macro | Float Curve--\n"
+                    code += "--Resolve Macro | Float/Vector Curve--\n"
                 if metPin.connected():
                     suffix += addOutPinToVariable(resultPin, [])
-                    value = ["", "W4::floatCurve(", getInPinToVariable(curvePin), ", " , getInPinToVariable(timePin), ", ", getOutPinToVariable(resultPin), ")"]
+                    value = ["", function0, getInPinToVariable(curvePin), ", " , getInPinToVariable(timePin), ", ", getOutPinToVariable(resultPin), ")"]
                     suffix += addOutPinToVariable(metPin, value)
-                    code += tabs() + "float " + getOutPinToVariable(resultPin) + ";\n"
+                    code += tabs() + type0 + getOutPinToVariable(resultPin) + ";\n"
                     code += tabs() + "bool " + getOutPinToVariable(metPin) + " = " + arrayToStr(value) + ";\n"
                 else:
-                    value = [getInPinToVariable(curvePin), "->GetFloatValue(", getInPinToVariable(timePin), ")"]
+                    value = [getInPinToVariable(curvePin), function1, getInPinToVariable(timePin), ")"]
                     suffix += addOutPinToVariable(resultPin, value)
-                    code += tabs() + "float " + getOutPinToVariable(resultPin) + " = " + arrayToStr(value) + ";\n"
+                    code += tabs() + type0 + getOutPinToVariable(resultPin) + " = " + arrayToStr(value) + ";\n"
             elif node0.MacroGraph == "W4_Macros_Object:AddIntVector":
                 v1Pin : Pin = node0.getPin("V1")
                 v2Pin : Pin = node0.getPin("V2")
@@ -1313,6 +1359,40 @@ def resolveReferences(pin : Pin, *args):
                         value = [getInPinToVariable(inPin), ".", cleanVar(pin.PinName)]
                         suffix += addOutPinToVariable(pin, value)
                         code += tabs() + typ(pin) + pin.getVar() + " = " + arrayToStr(value) + ";\n"
+        elif node0.type == Select:
+            optionPins = []
+            for pin in node0.pins:
+                if pin.isInput and pin.PinName.find("Option ") != -1:
+                    optionPins.append(pin)
+                    code += resolveReferences(pin)
+            indexPin = node0.getPin("Index")
+            code += resolveReferences(indexPin)
+            returnPin = node0.getPin("ReturnValue")
+            value = []
+            indexVar = getInPinToVariable(indexPin)
+            endOperator = ""
+            for idx, option in enumerate(optionPins):
+                if idx == len(optionPins) - 1:
+                    value.append(getInPinToVariable(option))
+                else:
+                    value.append(indexVar)
+                    value.append(" == " + str(idx) + " ? ")
+                    value.append(getInPinToVariable(option))
+                    value.append(" : (")
+                    endOperator += ")"
+            value.append(endOperator)
+            suffix += addOutPinToVariable(returnPin, value)
+            code += tabs() + typ(returnPin) + returnPin.getVar() + " = " + arrayToStr(value) + ";\n"
+        elif node0.type == ArrayFunction:
+            if node0.arrayFunctionType == ArrayLength:
+                arrayPin = node0.getPin("TargetArray")
+                returnPin = node0.getPin("ReturnValue")
+                code += resolveReferences(arrayPin)
+                value = [getInPinToVariable(arrayPin), ".Num()"]
+                suffix += addOutPinToVariable(returnPin, value)
+                code += tabs() + "int " + getOutPinToVariable(returnPin) + " = " + arrayToStr(value) + ";\n"
+            else:
+                error(f"Unhandled array function type for resolving references! {node0.arrayFunctionType}")
         else:
             error("Unhandled node type for resolving references! Type " + str(node0.type) + " | " + node0.Name)
 
@@ -1326,9 +1406,10 @@ clipboard_content = pyperclip.paste()
 lines = clipboard_content.split("\r\n")
 
 nodes = {}
-inc = 1
+inc = 0
 currentLine = ""
 for line in lines:
+    inc += 1
     currentLine = line
     if line.find("Begin Object") != -1:
         ignoreNode = False
@@ -1351,12 +1432,25 @@ for line in lines:
         elif type == "/Script/BlueprintGraph.K2Node_MacroInstance":
             n.type = Macro
         elif type == "/Script/BlueprintGraph.K2Node_CallArrayFunction":
-            n.type = ArrayFunction
-            arrayFunctionType = lFind("MemberName", lines[inc]) #Check the next line
-            if arrayFunctionType == "\"Array_Set\")":
-                n.arrayFunctionType = ArraySet
-            else:
-                error("Unknown array function type! " + arrayFunctionType)
+            n.type = Function
+            # n.type = ArrayFunction
+            # arrayFunctionType = ""
+            # if lines[inc].find("MemberName") != -1:
+            #     arrayFunctionType = lFind("MemberName", lines[inc]) #Check the next line
+            # elif lines[inc + 1].find("MemberName") != -1:
+            #     arrayFunctionType = lFind("MemberName", lines[inc + 1]) #Check the next next line (can have bIsPureFunc=True on first line)
+            # else:
+            #     error("Could not find Array function member name!\nLine " + str(inc - 1) + "\n" + line)
+            # if arrayFunctionType == "\"Array_Set\")":
+            #     n.arrayFunctionType = ArraySet
+            # elif arrayFunctionType == "\"Array_Length\")":
+            #     n.arrayFunctionType = ArrayLength
+            # elif arrayFunctionType == "\"Array_Add\")":
+            #     n.arrayFunctionType = ArrayAdd
+            # elif arrayFunctionType == "\"Array_Clear\")":
+            #     n.arrayFunctionType = ArrayClear
+            # else:
+            #     error("Unknown array function type! " + arrayFunctionType)
 
         elif type == "/Script/BlueprintGraph.K2Node_GetArrayItem":
             n.type = GetArrayItem
@@ -1378,6 +1472,8 @@ for line in lines:
             n.type = FunctionResult
         elif type == "/Script/BlueprintGraph.K2Node_BreakStruct":
             n.type = BreakStruct
+        elif type == "/Script/BlueprintGraph.K2Node_Select":
+            n.type = Select
         else:
             error("Unknown node type! " + type)
         if not ignoreNode:
@@ -1397,7 +1493,7 @@ for line in lines:
         elif category == "class":
             v.isPointer = True
         if line.find("ContainerType") != -1:
-            v.ContainerType = lFind("ContainerType")
+            v.ContainerType = cleanBP(lFind("ContainerType"))
         if v.ContainerType == "Map":
             category = cleanBP(lFind("TerminalCategory"))
             if line.find("TerminalSubCategoryObject") != -1:
@@ -1482,7 +1578,6 @@ for line in lines:
     elif line.find("ResolvedWildcardType=") != -1:
         category = cleanBP(lFind("PinCategory"))
         p.ResolvedWildcardType = getTypeFromBP(category, "PinSubCategoryObject")
-    inc += 1
 
 #Resolve subpins connections to pins
 for key, node in nodes.items():
@@ -1800,6 +1895,27 @@ while len(stack) > 0:
                 addNodeToStack(loopBodyPin.con())
         elif current.MacroGraph == "StandardMacros:IsValid":
             addCPP(addTwoPinBranch(current), "Add isValid macro")
+        elif current.MacroGraph == "StandardMacros:ForLoop":
+            firstPin = current.getPin("FirstIndex")
+            lastPin = current.getPin("LastIndex")
+            indexPin = current.getPin("Index")
+            line = ""
+            suffix = ""
+            line += resolveReferences(firstPin)
+            line += resolveReferences(lastPin)
+            ivar = "i" + getVarInc()
+            
+            suffix += addOutPinToVariable(indexPin, [], ivar)
+            line += f"{tabs()}for(int {ivar} = {getInPinToVariable(firstPin)}; {ivar} <= {getInPinToVariable(lastPin)}; ++{ivar}) {{\n"
+            addTab()
+            bodyPin = current.getPin("LoopBody")
+            completedPin = current.getPin("Completed")
+            if completedPin.connected():
+                addNodeToStack(completedPin.con())
+            addUnindentToStack()
+            if bodyPin.connected():
+                addNodeToStack(bodyPin.con())
+            addCPP(line + suffix, "Add for loop macro | Other pins")
         elif current.MacroGraph == "StandardMacros:ForLoopWithBreak":
             if currentConnection.PinId == current.getPin("Break").PinId:
                 addCPP(tabs() + getBreak(current) + " = false;\n", "Add for loop with break macro | Break pin")
@@ -1831,27 +1947,27 @@ while len(stack) > 0:
             addCPP(easyMacroCall(current), "Easy macro call")
         # else:
             # error("Macro not yet implemented! " + current.Name + " | " + current.MacroGraph)
-    elif current.type == ArrayFunction:
-        line = ""
-        if current.arrayFunctionType == ArraySet:
-            arrayPin = None
-            indexPin = None
-            itemPin = None
-            for pin in current.pins:
-                line += resolveReferences(pin)
-                if pin.PinName == "TargetArray":
-                    arrayPin = pin
-                if pin.PinName == "Index":
-                    indexPin = pin
-                if pin.PinName == "Item":
-                    itemPin = pin
-            if arrayPin == None or indexPin == None or itemPin == None:
-                error("Array/Index/Item Pin not found! " + current.Name)
-            line += tabs() + getInPinToVariable(arrayPin) + "[" + getInPinToVariable(indexPin) + "] = " + getInPinToVariable(itemPin) + ";\n"
-            addCPP(line, "Add array set function")
-        out = current.getThenOutput()
-        if out:
-            addNodeToStack(out.con())
+    # elif current.type == ArrayFunction:
+    #     line = ""
+    #     if current.arrayFunctionType == ArraySet:
+    #         arrayPin = None
+    #         indexPin = None
+    #         itemPin = None
+    #         for pin in current.pins:
+    #             line += resolveReferences(pin)
+    #             if pin.PinName == "TargetArray":
+    #                 arrayPin = pin
+    #             if pin.PinName == "Index":
+    #                 indexPin = pin
+    #             if pin.PinName == "Item":
+    #                 itemPin = pin
+    #         if arrayPin == None or indexPin == None or itemPin == None:
+    #             error("Array/Index/Item Pin not found! " + current.Name)
+    #         line += tabs() + getInPinToVariable(arrayPin) + "[" + getInPinToVariable(indexPin) + "] = " + getInPinToVariable(itemPin) + ";\n"
+    #         addCPP(line, "Add array set function")
+    #     out = current.getThenOutput()
+    #     if out:
+    #         addNodeToStack(out.con())
     elif current.type == Cast:
         addCPP(addTwoPinBranch(current), "Add cast")
     elif current.type == IfThen:
