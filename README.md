@@ -2,6 +2,7 @@
 EXPERIMENTAL program that converts Unreal Engine 4.27 blueprint graphs into C++
 
 EXPERIMENTAL
+This code is incomplete and doesn't handle a lot of nodes, I've worked to make the errors point you to where you need to define your nodes though.
 This is meant for advanced C++/Blueprint users only, there are a lot of nuances with converting blueprint into C++, such as handling multiple input execution connections into a single node (which will cause this program to purposely error).
 
 How to use:
