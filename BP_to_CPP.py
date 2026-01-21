@@ -2,7 +2,7 @@ import pyperclip
 import pathlib
 import re
 import traceback
-from typing import List
+from typing import Dict, List
 ####################################################################################
 #Designed for copying a single node graph from UE4.27 to the clipboard
 #Will create functions for macros
@@ -14,15 +14,15 @@ from typing import List
 #cpp:cache -> Use to supress warning about pure function being connected to multiple nodes
 ####################################################################################
 
-#What category to set in UPROPERTY for this-> variables at the top
-variablesCategory = "Scanner" #TODO Implement this
+#Put void AW4Database_C::ScannerTick(params) {  at the top
+addFunctionDeclaration = False
 
 #What Class:: to put before .cpp file function declaration
-className = "AW4Database_C"
+className = "ALabArm"
 
 #Overriden if the blueprint code is a function graph
 #Can also be overridden by adding a comment to the first line of the start node of your bp graph
-functionName = "ScannerTick" 
+functionName = "ScannerTick"
 
 #Used for directly adding variables inline, if the variable is only declared and used once
 flattenCode = False
@@ -32,13 +32,36 @@ errorTrace = False
 
 #Texts to global replace, called on cpp afterwards
 postReplacements = {
+    "FloatTowardsTargetFuncBP" : "W4::FloatTowardsTargetFunc",
     "UW4_InGame_TextBP_C" : "AW4_InGame_Text",
     "UW4_InGame_Text" : "AW4_InGame_Text",
     "TargetVoxelsTransform_0" : "TargetVoxelsTransform",
     "ToggleScannerBP" : "ToggleScanner",
     "W4_Macros_Object:ScannerVoxelWithinBounds" : "ScannerVoxelWithinBounds",
     "UW4Database_Funcs" : "AW4Database_Funcs",
-    "UW4Hand" : "AW4Hand"
+    "UW4Hand" : "AW4Hand",
+    "UW4HumanHand_C" : "AW4HumanHand_C",
+    "UW4SynthHand_C" : "AW4SynthHand_C",
+    "UA9Archer_Bent" : "AA9Archer_Bent",
+    "UPawn" : "APawn",
+    "UVRPawn" : "AVRPawn",
+    "UPBPlayerCharacter" : "APBPlayerCharacter",
+    "UPlayerController" : "APlayerController",
+    "UPathFindNode" : "APathFindNode",
+    "UStandardInspection" : "AStandardInspection",
+    # "GetRotationAngle" : "UW4_Geometry::GetRotationAngle",
+    # "DifferenceFriendlyRotation" : "UW4_Geometry::DifferenceFriendlyRotation",
+    # "TriNormal" : "UW4_Geometry::TriNormal",
+    "<EObjectTypeQuery>": "<TEnumAsByte<EObjectTypeQuery>>",
+    "BEnabled" : "bEnabled",
+    "False": "false",
+    "True": "true",
+    "BUseCustomProjectionMatrix" : "bUseCustomProjectionMatrix",
+    "UW4_Funcs_Pure::getCameraStereoEyePosition" : "UW4_Funcs_Pure::GetCameraStereoEyePosition",
+    "W4_Macros_Object:SimilarityBetweenRotations" : "UW4_Funcs_Pure::SimilarityBetweenRotations",
+    "_BP" : "",
+    "W4_Macros_Object:LookAtRotation2D" : "UW4_Funcs_Pure::LookAtRotation2D_BP",
+    # Put anything that requires a _BP after this point
 }
 
 postRegexReplacements = {
@@ -46,23 +69,28 @@ postRegexReplacements = {
     # r"FTransform\(FVector(.*?)FRotator(.*?)FVector" : r"FTransform(FRotator\2FVector\1FVector",
     #Fixes wrong order of FRotator params, from |Roll, Pitch, Yaw| -> |Pitch, Yaw, Roll|
     # r"FRotator\((.*?),(.*?),(.*?)\)" : r"FRotator(\2,\3, \1)",
-    #Fixes wrong order of pins to C++ AttachToComponent function, also adds FAttachmentTransformRules constructor
-    r"AttachToComponent\((.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?)\)" : r"AttachToComponent(\1, FAttachmentTransformRules(\3,\4,\5,\6), \2)",
+    #Fixes wrong order of pins to C++ AttachToComponent function, also adds FAttachmentTransformRules constructor, (Needs tab so it doesn't trigger for W4AttachToComponent)
+    r"AttachToComponent\((.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?)\)" : r"  AttachToComponent(\1, FAttachmentTransformRules(\3,\4,\5,\6), \2)",
     r"DetachFromComponent\((.[^,]*?),(.[^,]*?),(.[^,]*?),(.[^,]*?)\)" : r"DetachFromComponent(FDetachmentTransformRules(\1,\2,\3,\4))",
     r"W4::GetAssetUserData\((.*?), UW4AssetData::StaticClass\(\)\);" : r"Cast<UW4AssetData>(W4::GetAssetUserData(\1, UW4AssetData::StaticClass()));",
     r"FLinearColor\(\(R=(.*?)G=(.*?)B=(.*?)A=(.*?)\)" : r"FLinearColor(\1\2\3\4)",
-    r"FVector2D\(\(X=(.*?)Y=(.*?)\)\)" : r"FVector2D(\1\2)",
+    r"FVector2D\(\(X=(.*?)Y=(.*?)\)" : r"FVector2D(\1\2)",
+    r"UW4_Funcs_Pure::GetAssetUserData\((.*?)UW4AssetData::StaticClass\(\)\)" : r"Cast<UW4AssetData>(UW4_Funcs_Pure::GetAssetUserData(\1UW4AssetData::StaticClass()))",
+    r"registerDelay\((.*?), (.*?), (.*?), nullptr" : r"registerDelay(\1, \2, \3, this",
+    r"StandardMacros:IncrementInt\((.*?), (.*?)\)" : r"\2 = ++\1"
 }
 
 #Function name replacements
 memberNameReplacements = {
     "K2_SetWorldTransform": "SetWorldTransform",
     "K2_SetWorldLocation" : "SetWorldLocation",
+    "K2_SetWorldLocationAndRotation" : "SetWorldLocationAndRotation",
     "K2_SetWorldRotation" : "SetWorldRotation",
     "K2_SetWorldScale" : "SetWorldScale",
     "K2_SetActorTransform" : "SetActorTransform",
     "K2_SetActorLocation" : "SetActorLocation",
     "K2_SetActorRotation" : "SetActorRotation",
+    "K2_SetActorLocationAndRotation" : "SetActorLocationAndRotation",
     "K2_SetActorScale" : "SetActorScale",
     "K2_SetRelativeTransform" : "SetRelativeTransform",
     "K2_SetRelativeLocation" : "SetRelativeLocation",
@@ -77,17 +105,26 @@ memberNameReplacements = {
     "K2_AttachToComponent" : "AttachToComponent",
     "K2_DetachFromActor" : "DetachFromActor",
     "K2_DetachFromComponent" : "DetachFromComponent",
+    "K2_GetActorTransform" : "GetActorTransform",
+    "K2_GetActorLocation" : "GetActorLocation",
+    "K2_GetActorRotation" : "GetActorRotation",
+    "K2_AddWorldOffset" : "AddWorldOffset",
+    "K2_AddActorWorldOffset" : "AddActorWorldOffset",
+    "K2_AddLocalOffset" : "AddLocalOffset",
+    "K2_AddActorLocalOffset" : "AddActorLocalOffset",
 }
 
 memberParentsToUse = {
-    "W4_Funcs_Pure" : "W4",
-    "KismetSystemLibrary" : "KS",
-    "KismetMathLibrary" : "KM",
+    "W4_Funcs_Pure" : "UW4_Funcs_Pure",
+    "W4_Geometry" : "UW4_Geometry",
+    "KismetSystemLibrary" : "UKismetSystemLibrary",
+    "KismetMathLibrary" : "UKismetMathLibrary",
     "BlueprintMapLibrary" : "UBlueprintMapLibrary",
     "KismetMaterialLibrary" : "UKismetMaterialLibrary",
     "GameplayStatics" : "UGameplayStatics",
     "KismetTextLibrary" : "UKismetTextLibrary",
     "KismetStringLibrary" : "UKismetStringLibrary",
+    "KismetRenderingLibrary" : "UKismetRenderingLibrary"
 }
 
 replacePin = { #Prefix + Postfix around variable only for functions
@@ -101,6 +138,8 @@ replacePin = { #Prefix + Postfix around variable only for functions
     "SetActorTransform SweepHitResult" : ["&", ""],
     "SetActorLocation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"],
     "SetActorLocation SweepHitResult" : ["&", ""],
+    "SetActorLocationAndRotation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"],
+    "SetActorLocationAndRotation SweepHitResult" : ["&", ""],
     "SetActorRotation bTeleportPhysics" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"],
     "SetActorRotation SweepHitResult" : ["&", ""],
     "SetRelativeTransform SweepHitResult" : ["&", ""],
@@ -109,6 +148,18 @@ replacePin = { #Prefix + Postfix around variable only for functions
     "SetRelativeLocation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
     "SetRelativeRotation SweepHitResult" : ["&", ""],
     "SetRelativeRotation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
+    "AddWorldOffset SweepHitResult" : ["&", ""],
+    "AddWorldOffset bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
+    "AddActorWorldOffset SweepHitResult" : ["&", ""],
+    "AddActorWorldOffset bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"],
+    "AddLocalOffset SweepHitResult" : ["&", ""],
+    "AddLocalOffset bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
+    "AddActorLocalOffset SweepHitResult" : ["&", ""],
+    "AddActorLocalOffset bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
+    "SetWorldLocationAndRotation SweepHitResult" : ["&", ""],
+    "SetWorldLocationAndRotation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"], 
+    "SetRelativeLocationAndRotation SweepHitResult" : ["&", ""],
+    "SetRelativeLocationAndRotation bTeleport" : ["", " ? ETeleportType::TeleportPhysics : ETeleportType::None"]
 }
 
 Structs = {
@@ -118,6 +169,8 @@ Structs = {
     "FLinearColor" : ["FLinearColor(", ")"],
     "FIntVector" : ["FIntVector(", ")"],
     "FVector2D" : ["FVector2D(", ")"],
+    "FW4DelayOptionalData" : ["FW4DelayOptionalData(", ")"],
+    "FScreenSpaceMeshField" : ["FScreenSpaceMeshField(", ")"],
 }
 
 #Code specifically checks for a " = " in [1] for adding |type x = y|
@@ -142,19 +195,24 @@ functionFormat = { #Pin, Operand, Pin, Operand, Pin, Operand, Pin, Operand, ...
     "LessEqual_FloatFloat" : ["ReturnValue", " = (", "A", " <= ", "B", ")"],
     "LessEqual_IntInt" : ["ReturnValue", " = (", "A", " <= ", "B", ")"],
     "Less_FloatFloat" : ["ReturnValue", " = (", "A", " < ", "B", ")"],
+    "Percent_FloatFloat" : ["ReturnValue", " = FMath::Fmod(", "A", ", ", "B", ")"],
     "Less_IntInt" : ["ReturnValue", " = (", "A", " < ", "B", ")"],
     "EqualEqual_FloatFloat" : ["ReturnValue", " = (", "A", " == ", "B", ")"],
     "EqualEqual_ObjectObject" : ["ReturnValue", " = (", "A", " == ", "B", ")"],
     "EqualEqual_IntInt" : ["ReturnValue", " = (", "A", " == ", "B", ")"],
     "Not_PreBool" : ["ReturnValue", " = !(", "A", ")"],
-    "Map_Find" : ["Value", " = ", "TargetMap", "[", "Key", "]"],
+    # "Map_Find" : ["Value", " = ", "TargetMap", ".Find(", "Key", ");", "ReturnValue", "=", "Value", " != nullptr"],
     "Map_Keys" : ["TargetMap", ".GetKeys(", "Keys", ")"],
+    "Map_Values" : ["TargetMap", ".GenerateValueArray(", "Values", ")"],
     "Map_Clear" : ["TargetMap", ".Reset()"],
+    "Map_Add" : ["TargetMap", ".Add(", "Key", ",", "Value", ")"],
+    "Map_Remove" : ["TargetMap", ".Remove(", "Key", ")"],
     "Array_Length" : ["ReturnValue", " = ", "TargetArray", ".Num()"],
     "Array_Add" : ["TargetArray", ".Add(", "NewItem", ")"],
     "Array_Remove" : ["TargetArray", ".RemoveAt(", "IndexToRemove", ")"],
     "Array_RemoveItem" : ["TargetArray", ".Remove(", "Item", ")"],
     "Array_Clear" : ["TargetArray", ".Reset()"],
+    "Array_Contains" : ["TargetArray", ".Contains(", "ItemToFind", ")"],
     "Array_Set" : ["TargetArray", "[", "Index", "] = ", "Item"],
     "Set_Length" : ["ReturnValue", " = ", "TargetSet", ".Num()"],
     "Set_Contains" : ["ReturnValue", " = ", "TargetSet", ".Contains(", "ItemToFind", ")"],
@@ -181,7 +239,10 @@ functionFormat = { #Pin, Operand, Pin, Operand, Pin, Operand, Pin, Operand, ...
     "SelectClass" : ["ReturnValue", " = ", "bPickA", " ? ", "A", " : ", "B"],
     "W4_Macros_Object:ClampLinearColor" : ["Result", " = ClampLinearColor(", "LinearColor", ", ", "Min", ", ", "Max", ")"],
     "K2_GetComponentsByClass" : ["self", "->GetComponents(", "ReturnValue", ")"],
-    "K2Node_EnumEquality" : ["ReturnValue", " = ", "A", " == ", "B" ]
+    "K2Node_EnumEquality" : ["ReturnValue", " = ", "A", " == ", "B" ],
+    "K2Node_EnumInequality" : ["ReturnValue", " = ", "A", " != ", "B" ],
+    "Map_Contains" : ["ReturnValue", " = ", "TargetMap", ".Contains(", "Key", ")"],
+    "Array_LastIndex" : ["ReturnValue", " = ", "TargetArray", ".Num() - 1"]
 }
 
 SubPinGetters = {
@@ -205,6 +266,10 @@ VariableGetsToFunctions = {
     "UStaticMeshComponent StaticMesh" : "GetStaticMesh()",
     "AActor RootComponent" : "GetRootComponent()",
     "APlayerCameraManager TransformComponent" : "GetTransformComponent()",
+    "USceneComponent RelativeLocation" : "GetRelativeLocation()",
+    "USceneComponent RelativeRotation" : "GetRelativeRotation()",
+    "ASkeletalMeshActor SkeletalMeshComponent" : "GetSkeletalMeshComponent()",
+    "UBoxComponent BoxExtent" : "GetUnscaledBoxExtent()"
 }
 
 class Variable():
@@ -213,10 +278,21 @@ class Variable():
         self.tab : int = 0
         self.pure : bool = False
 
-vars : dict[str : list[str]]= {} #var -> [var, operator, var, operator, ...]
-pinsToVariables : dict[str : Variable] = {} #node.name pinId -> [variable name, tab]
+# vars: Dict[str, List[str]] = {} #var -> [var, operator, var, operator, ...]
+vars = {} #var -> [var, operator, var, operator, ...]
+# pinsToVariables : dict[str : Variable] = {} #node.name pinId -> [variable name, tab]
+pinsToVariables = {} #node.name pinId -> [variable name, tab]
 cpp = ""
 currentTab = 0
+
+def isFloat(var):
+    if var.find(".") == -1:
+        return False
+    try:
+        float(var)
+        return True
+    except (ValueError, TypeError):
+        return False
 
 def findPersistentOption(option):
     global persistent
@@ -264,7 +340,12 @@ FunctionResult = 16
 FunctionEntry = 17
 BreakStruct = 18
 Select = 19
-# CustomEvent = 20
+SetStructFields = 20
+MakeStruct = 21
+SetRef = 22
+CallParentFunction = 23
+SwitchString = 24
+SwitchEnum = 25
 
 #Array Function Types:
 ArraySet = 1
@@ -374,12 +455,16 @@ class Node():
         self.MemberParent : str = "" #KismetMathLibrary
         self.MemberName : str = "" #InvertTransform
         self.postCode : str = "" #Used for adding labelX {
+        self.preCode : str = "} " #Used for adding } in unindent
         self.prefixCode : str = "" #Used for adding labelX {
         self.MacroGraph : str = "" #StandardMacros:ForEachLoop
         self.ResolvedWildcardType : str = "" #StaticMeshComponent
         self.breakVar : str = "" #break0 | Used for for loops with break
         self.NodeComment : str = ""
         self.LocalVariables : List[Pin] = []
+        self.doOnceVar : str = ""
+        self.gateVar : str = ""
+        self.ReturnByRef : bool = True
 
     def hasInputExec(self, *args):
         """args[0] = Skip connection count"""
@@ -474,7 +559,10 @@ def getDefaultValue(pin : Pin):
             struct = Structs[pin.type]
             pin.DefaultValue = struct[0] + cleanBP(lFind4("DefaultValue")) + struct[1]
         else:
-            pin.DefaultValue = cleanBP(lFind4("DefaultValue"))
+            if pin.Enum != "":
+                pin.DefaultValue = pin.Enum + "::" + cleanBP(lFind4("DefaultValue"))
+            else:
+                pin.DefaultValue = cleanBP(lFind4("DefaultValue"))
     elif pin.ContainerType == "Array" or pin.ContainerType == "Set" or pin.ContainerType == "Map":
         pin.DefaultValue = "{}"
     else:
@@ -486,13 +574,17 @@ def getDefaultValue(pin : Pin):
             pin.DefaultValue = "FIntVector::ZeroValue"
         if pin.type == "FVector2D":
             pin.DefaultValue = "FVector2D::ZeroVector"
+        if pin.type == "FW4DelayOptionalData":
+            pin.DefaultValue = "FW4DelayOptionalData()"
         if pin.type == "FRotator":
             pin.DefaultValue = "FRotator::ZeroRotator"
         if pin.type == "float" or pin.type == "int":
             pin.DefaultValue = "0"
         if pin.type == "bool":
             pin.DefaultValue = "false"
-        if pin.DefaultValue == "" and pin.type != "FString":
+        if pin.type in Structs:
+            pin.DefaultValue = Structs[pin.type][0] + Structs[pin.type][1]
+        elif pin.DefaultValue == "" and pin.type != "FString":
             pin.DefaultValue = "nullptr"
 
 startNode : Node = None
@@ -512,7 +604,7 @@ def getObjectAU(t):
 
 #Return FName for name, FString for string, etc.
 def getTypeFromBP(bptype, objectTypeKeyword): 
-    if bptype == "exec":
+    if bptype == "exec" or bptype == "Exec":
         return "exec"
     elif bptype == "object" and objectTypeKeyword:
         t = cleanBP(getDotSeparatedName(lFind(objectTypeKeyword)))
@@ -578,7 +670,8 @@ def easyMacroCall(node : Node):
 def error(message):
     print(message)
     if errorTrace:
-        traceback.print_stack() 
+        traceback.print_stack()
+    pyperclip.copy(message)
     exit()
 
 def arrayToStr(array):
@@ -599,6 +692,8 @@ def addUnindentToStack(*suffix):
     node.type = Unindent
     if len(suffix) > 0:
         node.postCode = suffix[0]
+    if len(suffix) > 1:
+        node.preCode = suffix[1]
     stack.append(node)
     connectionStack.append(None)
 
@@ -737,6 +832,13 @@ def getVarInc():
 #     else:
 #         return var.name
 
+def isPinInVariables(pin):
+    connection = pin.con()
+    if connection:
+        key = connection.nodeName + " " + connection.PinId
+        if key in pinsToVariables:
+            return True
+    return False
 
 def getInPinToVariable(pin : Pin, *args):
     """Provide input pin. returns variable for output it's connected to\n
@@ -757,8 +859,8 @@ def getInPinToVariable(pin : Pin, *args):
                 return "nullptr"
         if pin.type == "FString" or pin.type == "FName":
             return "\"" + pin.DefaultValue + "\""
-        if pin.Enum != "":
-            return pin.Enum + "::" + pin.DefaultValue
+        # if pin.Enum != "":
+            # return pin.Enum + "::" + pin.DefaultValue
         return pin.DefaultValue
     connection = pin.con()
     if len(args) > 0:
@@ -825,7 +927,7 @@ def handleInputSubPins(pin : Pin):
     if pin.isOutput:
         error("handleInputSubPins was provided an output pin!")
     if not pin.type in Structs:
-        error("Structs missing type! " + pin.type)
+        error("Structs missing type! " + pin.type + " | Node: " + pin.node.Name)
     struct = Structs[pin.type]
     line += struct[0]
     for subPin in pin.SubPins:
@@ -940,8 +1042,8 @@ def func(node : Node, pins : Pin, params : List[str], *args):
 
         prefix2 = ""
         suffix2 = ""
-        if param == pin.DefaultValue and pin.Enum != "":
-            prefix2 += pin.Enum + "::"
+        # if param == pin.DefaultValue and pin.Enum != "":
+        #     prefix2 += pin.Enum + "::"
 
         if param == pin.DefaultValue and pin.type == "bool":
             param = param.lower()
@@ -985,6 +1087,24 @@ def getFunctionCode(node : Node):
         line += getFunctionFormat(node, node.MemberName)
         return line
     
+    if node.MemberName == "Map_Find":
+        mapPin = node.getPin("TargetMap")
+        keyPin = node.getPin("Key")
+        foundPin = node.getPin("ReturnValue")
+        valuePin = node.getPin("Value")
+        suffix += addOutPinToVariable(foundPin, [])
+        suffix += addOutPinToVariable(valuePin, [])
+        tempVar = "tempVar" + getVarInc()
+        line += tabs() + typ(valuePin) + "* " + tempVar + " = " + getInPinToVariable(mapPin) + ".Find(" + getInPinToVariable(keyPin) + ");\n"
+        line += tabs() + "bool " + getOutPinToVariable(foundPin) + " = " + tempVar + " != nullptr;\n"
+        line += tabs() + typ(valuePin) + getOutPinToVariable(valuePin)
+        if typ(valuePin).find("*") != -1:
+            line += " = nullptr"
+        line += ";\n"
+        line += tabs() + "if(" + getOutPinToVariable(foundPin) + ")\n" 
+        line += tabs() + "\t" + getOutPinToVariable(valuePin) + " = *" + tempVar + ";\n"
+        return line + suffix
+
     useReturnPin = False
     if returnPin:
         useReturnPin = returnPin.inUse()
@@ -1093,7 +1213,7 @@ def addTwoPinBranch(node : Node):
         out2 = node.getPin("Is Not Valid")
         conditionPin = node.getPin("InputObject")
         line += resolveReferences(conditionPin)
-        condition = getInPinToVariable(conditionPin)
+        condition = "IsValid(" + getInPinToVariable(conditionPin) + ")"
     elif node.type == IfThen:
         out1 = node.getPin("then")
         out2 = node.getPin("else")
@@ -1189,21 +1309,25 @@ def getDotSeparatedName(name):
         return names[1]
     else:
         return names[0]
-    
 
-def resolveKnot(connection : PinConnection, input : bool):
+def resolveInputKnot(connection : PinConnection):
     node = getNode(connection)
     if node.type == Knot:
-        if input:
-            if isEmpty(node.pins[0].connections):
-                error("Unconnected reroute node! " + node.Name)
-            return resolveKnot(node.pins[0].con(), input) #Will return first of many nodes if it's a grafted execution knot
-        else: #Output
-            if isEmpty(node.pins[1].connections):
-                error("Unconnected reroute node! " + node.Name)
-            return resolveKnot(node.pins[1].con(), input) #Will return first of many nodes if it's a branching data knot
+        if isEmpty(node.pins[0].connections):
+            error("Unconnected reroute node! " + node.Name)
+        return resolveInputKnot(node.pins[0].con())
     else:
         return connection
+
+def resolveOutputKnot(connection : PinConnection, list : List[PinConnection]):
+    node = getNode(connection)
+    if node.type == Knot:
+        for connection2 in node.pins[1].connections:
+            node2 = getNode(connection2)
+            if node2.type != Knot:
+                list.append(connection2)
+            else:
+                resolveOutputKnot(connection2, list) #Will return first of many nodes if it's a branching data knot
 
 def resolveReferences(pin : Pin, *args):
     """Intended to generate code for all the variables needed for current node\n
@@ -1230,11 +1354,14 @@ def resolveReferences(pin : Pin, *args):
         #Need to add code for specifying variable if variable is not already defined in context
         if node0.type == VariableGet:
             outPin = node0.variableGetPin()
-            if node0.selfIsContext(): #Reached end of chain, node does not have any more references to resolve
+            if node0.MemberName == "self":  # Special case for self node
+                suffix += addOutPinToVariable(outPin, [], "this")
+                return code + suffix
+            if node0.selfIsContext():  # Reached end of chain
                 debugDesc = ""
                 if debug:
-                    debugDesc = "--Resolve VariableGet Self Context--\n"
-                suffix += addOutPinToVariable(outPin, [], cleanVar(outPin.PinName)) #output pin
+                    debugDesc = "--Resolve VariableGet Self Context--" + node0.Name + "\n"
+                suffix += addOutPinToVariable(outPin, [], cleanVar(outPin.PinName))  # output pin
                 return debugDesc + code + suffix
             else: #Need to resolve node going left
                 selfPin = node0.getSelfInput()
@@ -1295,7 +1422,7 @@ def resolveReferences(pin : Pin, *args):
             suffix += addOutPinToVariable(outPin, value)
             if debug:
                 code += "--Resolve GetArrayItem--\n"
-            code += tabs() + typ(outPin) + getOutPinToVariable(outPin) + " = " + arrayToStr(value) + ";\n"
+            code += tabs() + typ(outPin) + ("&" if node0.ReturnByRef else "") + getOutPinToVariable(outPin) + " = " + arrayToStr(value) + ";\n"
         elif node0.type == Math:
             outPin = None
             for pin in node0.pins:
@@ -1306,6 +1433,8 @@ def resolveReferences(pin : Pin, *args):
             if not outPin:
                 error("Could not find return pin on math node! " + node0.Name)
             operator = ""
+            value = []
+            postValue = ""
             if node0.MemberName.find("Multiply") != -1:
                 operator = " * "
             elif node0.MemberName.find("Add") != -1:
@@ -1316,16 +1445,30 @@ def resolveReferences(pin : Pin, *args):
                 operator = " || "
             elif node0.MemberName.find("Concat_StrStr") != -1:
                 operator = " + "
+            elif node0.MemberName == "FMax" or node0.MemberName == "Max":
+                operator = ","
+                value.append("FMath::Max(")
+                postValue = ")"
+            elif node0.MemberName == "FMin" or node0.MemberName == "Min":
+                operator = ","
+                value.append("FMath::Min(")
+                postValue = ")"
             else:
                 error("Could not resolve math type! " + node0.MemberName + " | " + node0.Name)
             if debug:
                 code += "--Resolve Math--\n"
-            value = []
             for pin in node0.pins:
                 if pin.isInput and pin.PinName != "self":
                     value.append(getInPinToVariable(pin))
                     value.append(operator)
             value.pop() #Remove extra operator
+            if postValue != "":
+                value.append(postValue)
+                if node0.MemberName == "FMax" or node0.MemberName == "FMin" or node0.MemberName == "Max" or node0.MemberName == "Min":
+                    if isFloat(value[1]):
+                        value[1] += "f"
+                    if isFloat(value[3]):
+                        value[3] += "f"
             suffix += addOutPinToVariable(outPin, value)
             code += tabs() + typ(outPin) + getOutPinToVariable(outPin) + " = " + arrayToStr(value) + ";\n"
         elif node0.type == MakeArray:
@@ -1392,6 +1535,17 @@ def resolveReferences(pin : Pin, *args):
                 value = [getInPinToVariable(v1Pin), " + ", getInPinToVariable(v2Pin)]
                 suffix += addOutPinToVariable(resultPin, value)
                 code += tabs() + "FIntVector " + getOutPinToVariable(resultPin) + " = " + arrayToStr(value) + ";\n"
+            elif node0.MacroGraph == "W4_Macros_Object:EqualsIntVector":
+                v1Pin : Pin = node0.getPin("V1")
+                v2Pin : Pin = node0.getPin("V2")
+                resultPin : Pin = node0.getPin("Result")
+                code += resolveReferences(v1Pin)
+                code += resolveReferences(v2Pin)
+                if debug:
+                    code += "--Resolve Macro | EqualsIntVector--\n"
+                value = [getInPinToVariable(v1Pin), " == ", getInPinToVariable(v2Pin)]
+                suffix += addOutPinToVariable(resultPin, value)
+                code += tabs() + "bool " + getOutPinToVariable(resultPin) + " = " + arrayToStr(value) + ";\n"
             # elif node0.MacroGraph in EasyMacroCalls:
             else:
                 if debug:
@@ -1456,6 +1610,19 @@ def resolveReferences(pin : Pin, *args):
                 code += tabs() + "int " + getOutPinToVariable(returnPin) + " = " + arrayToStr(value) + ";\n"
             else:
                 error(f"Unhandled array function type for resolving references! {node0.arrayFunctionType}")
+        elif node0.type == MakeStruct:
+            outStructPin = node0.pins[0]
+            suffix += addOutPinToVariable(outStructPin, [])
+            var = getOutPinToVariable(outStructPin)
+            code += f"{tabs()}F{outStructPin.PinName} {var} = F{outStructPin.PinName}();\n"
+            for pin in node0.pins:
+                if pin.isInput:
+                    code += resolveReferences(pin)
+                    code += f"{tabs()}{var}.{pin.PinName} = {getInPinToVariable(pin)};\n"
+        elif node0.type == FunctionEntry:
+            if node0.getPin("DeltaSeconds"):
+                deltaTimePin = node0.getPin("DeltaSeconds")
+                code += addOutPinToVariable(deltaTimePin, [], "DeltaSeconds")
         else:
             error("Unhandled node type for resolving references! Type " + str(node0.type) + " | " + node0.Name)
 
@@ -1544,6 +1711,24 @@ for line in lines:
         elif type == "/Script/BlueprintGraph.K2Node_EnumEquality":
             n.type = Function
             n.MemberName = "K2Node_EnumEquality"
+        elif type == "/Script/BlueprintGraph.K2Node_EnumInequality":
+            n.type = Function
+            n.MemberName = "K2Node_EnumInequality"
+        elif type == "/Script/BlueprintGraph.K2Node_Self":
+            n.type = VariableGet  # Treat it as a variable get
+            n.MemberName = "self"  # Use "self" as the member name
+        elif type == "/Script/BlueprintGraph.K2Node_SetFieldsInStruct":
+            n.type = SetStructFields
+        elif type == "/Script/BlueprintGraph.K2Node_MakeStruct":
+            n.type = MakeStruct
+        elif type == "/Script/BlueprintGraph.K2Node_VariableSetRef":
+            n.type = SetRef
+        elif type == "/Script/BlueprintGraph.K2Node_CallParentFunction":
+            n.type = CallParentFunction
+        elif type == "/Script/BlueprintGraph.K2Node_SwitchString":
+            n.type = SwitchString
+        elif type == "/Script/BlueprintGraph.K2Node_SwitchEnum":
+            n.type = SwitchEnum
         else:
             error("Unknown node type! " + type)
         if not ignoreNode:
@@ -1588,6 +1773,8 @@ for line in lines:
             n.MemberName = memberNameReplacements[n.MemberName]
     elif line.find("NodeComment=") != -1:
         n.NodeComment = cleanBP(lFind("NodeComment"))
+    elif line.find("bReturnByRefDesired=False") != -1:
+        n.ReturnByRef = False
     elif line.find("CustomProperties Pin") != -1:
         p = Pin()
         p.node = n
@@ -1711,17 +1898,35 @@ for key, node in nodes.items():
 #Untangle all knots (Reroute pins)
 for key, node in nodes.items():
     for pin in node.pins:
-        if len(pin.connections) > 0:
-            for idx, con in enumerate(pin.connections):
-                node = getNode(con)
-                if node.type == Knot:
-                    pin.connections[idx] = resolveKnot(con, pin.isInput)
+        connectionsToRemove = []
+        connectionsToAdd = []
+        for idx, con in enumerate(pin.connections):
+            node = getNode(con)
+            if node.type == Knot:
+                if pin.isInput:
+                    pin.connections[idx] = resolveInputKnot(con)
+                else:
+                    connectionsToRemove.append(idx)
+                    resolveOutputKnot(con, connectionsToAdd)
+        for idx in reversed(connectionsToRemove):
+            del pin.connections[idx]
+        for con in connectionsToAdd:
+            pin.connections.append(con)
     for pin in node.subPins:
-        if len(pin.connections) > 0:
-            for idx, con in enumerate(pin.connections):
-                node = getNode(con)
-                if node.type == Knot:
-                    pin.connections[idx] = resolveKnot(con, pin.isInput)
+        connectionsToRemove = []
+        connectionsToAdd = []
+        for idx, con in enumerate(pin.connections):
+            node = getNode(con)
+            if node.type == Knot:
+                if pin.isInput:
+                    pin.connections[idx] = resolveInputKnot(con)
+                else:
+                    connectionsToRemove.append(idx)
+                    resolveOutputKnot(con, connectionsToAdd)
+        for idx in reversed(connectionsToRemove):
+            del pin.connections[idx]
+        for con in connectionsToAdd:
+            pin.connections.append(con)
 
 # branches = {} #node.Name_pin.PinId -> branch name
 # branchesAdded = {} #Set of node.Name_pin.PinId
@@ -1841,9 +2046,10 @@ while len(stack) > 0:
                 if pin.isInput and not pin.isExec:
                     returnPins.append(pin)
 
-        #Function declaration
-        line = tabs() + "void " + className + "::" + functionName + "("
+        line = ""
         suffix = ""
+        #Function declaration
+        line += tabs() + "void " + className + "::" + functionName + "("
         for pin in current.pins:
             if pin.isOutput and not pin.isExec:
                 suffix += addOutPinToVariable(pin, [], cleanVar(pin.PinName))
@@ -1857,7 +2063,11 @@ while len(stack) > 0:
             else:
                 line += typ(pin) + "& " + cleanVar(pin.PinName) + ", "
         line = noComma(line) + ") {\n"
-        addTab()
+        
+        if addFunctionDeclaration:
+            addTab()
+        if not addFunctionDeclaration:
+            line = ""
 
         #Add local variable declarations
         if current.type == FunctionEntry:
@@ -1869,13 +2079,14 @@ while len(stack) > 0:
         addCPP(line + suffix, "Add function declaration")
         out = current.getThenOutput()
         if out:
-            addUnindentToStack() #Add } to very end of code
+            if addFunctionDeclaration:
+                addUnindentToStack() #Add } to very end of code
             addNodeToStack(out.con())
         else:
             print("Could not find execute pin for start node! " + current.Name)
     elif current.type == Unindent:
         removeTab()
-        line = tabs() + "} " + current.postCode + "\n" #Post code may contain a skipping label
+        line = f"{tabs()}{current.preCode}{current.postCode}\n" #Post code may contain a skipping label
         addCPP(line, "Add unindent")
         if line.find("{\n") != -1:
             addTab()
@@ -1904,7 +2115,7 @@ while len(stack) > 0:
             line += tabs() + owner + cleanVar(setPin.PinName) + " = " + val + ";\n"
         else:
             val = setPin.DefaultValue
-            if setPin.type != "FName" and setPin.type != "FString" and setPin.type != "FText" and setPin.DefaultValue == "":
+            if setPin.type != "FName" and setPin.type != "FString" and setPin.DefaultValue == "":
                 val = "nullptr"
             line += tabs() + owner + cleanVar(setPin.PinName) + " = " + val + ";\n"
         addCPP(line, "Add variable set")
@@ -2054,6 +2265,94 @@ while len(stack) > 0:
                 if bodyPin.connected():
                     addNodeToStack(bodyPin.con())
                 addCPP(line + suffix, "Add for loop with break macro | Other pins")
+        elif current.MacroGraph == "StandardMacros:DoOnce":
+            resetPin = current.getPin("Reset")
+            if current.doOnceVar == "":
+                current.doOnceVar = "doOnceOpen" + getVarInc()
+            if currentConnection.PinId == resetPin.PinId:
+                addCPP(tabs() + f"{current.doOnceVar} = true;\n", "Add do once macro | Reset pin")
+            else:
+                execPin = current.getPin("execute")
+                startClosedPin = current.getPin("Start Closed")
+                startOpen = "true"
+                if startClosedPin.DefaultValue == "true":
+                    startOpen = "false"
+                completedPin = current.getPin("Completed")
+                line = ""
+                line += resolveReferences(startClosedPin)
+                print(f"A Do Once node requires you add this variable in some global context: bool {current.doOnceVar} = {startOpen};")
+                line += tabs() + "if(" + current.doOnceVar + ") {\n"
+                addTab()
+                addUnindentToStack()
+                if completedPin.connected():
+                    addNodeToStack(completedPin.con())
+                addCPP(line, "Add do once macro | Execute pin")
+        elif current.MacroGraph == "StandardMacros:WhileLoop":
+            conditionPin = current.getPin("Condition")
+            line = ""
+            suffix = ""
+            line += resolveReferences(conditionPin)
+            
+            line += tabs() + "while(" + getInPinToVariable(conditionPin) + ") {\n"
+            addTab()
+            bodyPin = current.getPin("LoopBody")
+            completedPin = current.getPin("Completed")
+            if completedPin.connected():
+                addNodeToStack(completedPin.con())
+            addUnindentToStack()
+            if bodyPin.connected():
+                addNodeToStack(bodyPin.con())
+            addCPP(line + suffix, "Add while loop macro | Other pins")
+        elif current.MacroGraph == "W4_Macros_Object:W4 Gate":
+            line = ""
+            enterPin = current.getPin("Enter")
+            openPin = current.getPin("Open")
+            closePin = current.getPin("Close")
+            togglePin = current.getPin("Toggle")
+            boolPin = current.getPin("Object Variable Bool")
+            exitPin = current.getPin("Exit")
+            if current.gateVar == "":
+                line += resolveReferences(boolPin)
+                current.gateVar = getInPinToVariable(boolPin)
+            boolName = getInPinToVariable(boolPin)
+            if currentConnection.PinId == enterPin.PinId:
+                line += f"{tabs()}if({boolName}) {{\n"
+                addTab()
+                addUnindentToStack()
+                if exitPin.connected():
+                    addNodeToStack(exitPin.con())
+                addCPP(line, "Add W4 Gate | Enter pin")
+            elif currentConnection.PinId == openPin.PinId:
+                line += f"{tabs()}{boolName} = true;\n"
+                addCPP(line, "Add W4 Gate | Open pin")
+            elif currentConnection.PinId == closePin.PinId:
+                line += f"{tabs()}{boolName} = false;\n"
+                addCPP(line, "Add W4 Gate | Close pin")
+            elif currentConnection.PinId == togglePin.PinId:
+                line += f"{tabs()}{boolName} = !{boolName};\n"
+                addCPP(line, "Add W4 Gate | Toggle pin")
+
+        elif current.MacroGraph == "W4_Macros_Object:W4 Do Once":
+            line = ""
+            enterPin = current.getPin("Enter")
+            resetPin = current.getPin("Reset")
+            boolPin = current.getPin("Object Variable Bool")
+            completedPin = current.getPin("Completed")
+            if current.doOnceVar == "":
+                line += resolveReferences(boolPin)
+                current.doOnceVar = getInPinToVariable(boolPin)
+            boolName = getInPinToVariable(boolPin)
+            if currentConnection.PinId == enterPin.PinId:
+                line += f"{tabs()}if(!{boolName}) {{\n{tabs()}\t{boolName} = true;\n"
+                addTab()
+                addUnindentToStack()
+                if completedPin.connected():
+                    addNodeToStack(completedPin.con())
+                addCPP(line, "Add W4 Do Once | Enter pin")
+            elif currentConnection.PinId == resetPin.PinId:
+                line += f"{tabs()}{boolName} = false;\n"
+                addCPP(line, "Add W4 Do Once | Reset pin")
+
         # elif current.MacroGraph in EasyMacroCalls:
         else:
             addCPP(easyMacroCall(current), "Easy macro call")
@@ -2119,6 +2418,115 @@ while len(stack) > 0:
                 line += tabs() + cleanVar(pin.PinName) + " = " + getInPinToVariable(pin) + ";\n"
         line += tabs() + "return;\n"
         addCPP(line, "Add function result")
+    elif current.type == SetStructFields:
+        line = ""
+        inStructPin = current.getPin("StructRef")
+        outStructPin = current.getPin("StructOut")
+        thenPin = current.getPin("then")
+        line += resolveReferences(inStructPin)
+        structVar = getInPinToVariable(inStructPin)
+        for pin in current.pins:
+            if pin.isInput and not pin.isExec and pin.PinName != "StructRef":
+                line += resolveReferences(pin)
+                line += tabs() + structVar + "." + cleanVar(pin.PinName) + " = " + getInPinToVariable(pin) + ";\n"
+        suffix += addOutPinToVariable(outStructPin, [], structVar)
+        if thenPin.connected():
+            addNodeToStack(thenPin.con())
+        addCPP(line, "Add set struct fields")
+    elif current.type == SetRef:
+        line = ""
+        thenPin = current.getPin("then")
+
+        targetPin = current.getPin("Target")
+        valuePin = current.getPin("Value")
+        line += resolveReferences(targetPin)
+        line += resolveReferences(valuePin)
+        line += tabs() + getInPinToVariable(targetPin) + " = " + getInPinToVariable(valuePin) + ";\n"
+
+        if thenPin.connected():
+            addNodeToStack(thenPin.con())
+            
+        addCPP(line, "Add Set Ref")
+    elif current.type == CallParentFunction:
+        line = ""
+        for pin in current.pins:
+            if pin.isInput and not pin.isExec:
+                line += resolveReferences(pin)
+        thenPin = current.getPin("then")
+        if thenPin.connected():
+            addNodeToStack(thenPin.con())
+        name = current.MemberName
+        if name == "ReceiveTick":
+            name = "Tick"
+        line += tabs() + "Super::" + name + "("
+        inc = 0
+        for pin in current.pins:
+            if pin.isInput and not pin.isExec and pin.PinName != "self":
+                if inc != 0:
+                    line += ", "
+                line += getInPinToVariable(pin)
+                inc += 1
+        line += ");\n"
+        addCPP(line, "Add Call parent function")
+    elif current.type == SwitchString:
+        line = ""
+        defaultPin = current.getPin("Default")
+        # execPin = current.getPin("execute")
+        selectionPin = current.getPin("Selection")
+        line += resolveReferences(selectionPin)
+        inc = 0
+        casePins = []
+        for pin in current.pins:
+            if inc > 3: #4th pin is hidden input "NotEqual_StrStr"
+                if pin.connected():
+                    casePins.append(pin)
+            inc += 1
+        # line += tabs() + f"switch ({getInPinToVariable(selectionPin)}) {{\n"
+        stringVar = getInPinToVariable(selectionPin)
+        # addUnindentToStack()
+        # addTab()
+        if defaultPin.connected():
+            # addUnindentToStack(f"break;\n{tabs()}}}", "")
+            addUnindentToStack()
+            # addNodeToStack(defaultPin.con(), f"{tabs()}default:\n{tabs()}{{\n")
+            addNodeToStack(defaultPin.con(), f"{tabs()}else {{\n")
+        
+        for pin in casePins:
+            # Not doing case statements because they cause C++ compilation errors with "initialization of var308 skipped by case label"
+            # addUnindentToStack(f"break;\n{tabs()}}}", "")
+            addUnindentToStack()
+            # addNodeToStack(pin.con(), f"{tabs()}case "{pin.PinName}":\n{tabs()}{{\n")
+            if pin == casePins[-1]:
+                addNodeToStack(pin.con(), f"{tabs()}if ({stringVar} == \"{pin.PinName}\") {{\n")
+            else:
+                addNodeToStack(pin.con(), f"{tabs()}else if ({stringVar} == \"{pin.PinName}\") {{\n")
+        addCPP(line, "Add Switch string")
+    elif current.type == SwitchEnum:
+        line = ""
+        selectionPin = current.getPin("Selection")
+        line += resolveReferences(selectionPin)
+        inc = 0
+        casePins = []
+        for pin in current.pins:
+            if inc > 2: #3rd pin is hidden input "NotEqual_ByteByte"
+                if pin.connected():
+                    casePins.append(pin)
+            inc += 1
+        enumVar = getInPinToVariable(selectionPin)
+
+        # line += tabs() + "switch(" + enumVar + ") {\n"
+        # addUnindentToStack()
+        # for pin in casePins:
+        #     addUnindentToStack("break;", "")
+        #     addNodeToStack(pin.con(), f"{tabs()}case {selectionPin.Enum}::{pin.PinName}:\n")
+
+        for pin in casePins:
+            addUnindentToStack()
+            if pin == casePins[-1]:
+                addNodeToStack(pin.con(), f"{tabs()}if ({enumVar} == {selectionPin.Enum}::{pin.PinName}) {{\n")
+            else:
+                addNodeToStack(pin.con(), f"{tabs()}else if ({enumVar} == {selectionPin.Enum}::{pin.PinName}) {{\n")
+        addCPP(line, "Add Switch enum")
     else:
         error("Unhandled node type for stack traversal! " + str(current.type))
 
@@ -2205,6 +2613,12 @@ pyperclip.copy(cpp)
 print("Output copied to clipboard")
 print("Output written to:")
 print(str(pathlib.Path().absolute()) + "\\output.cpp")
+print("Common Libraries:")
+print("#include \"Kismet/KismetMathLibrary.h\"")
+print("#include \"Kismet/KismetSystemLibrary.h\"")
+print("#include \"Kismet/GameplayStatics.h\"")
+print("#include \"W4Library/W4_Funcs_Pure.h\"")
+print("#include \"W4Library/W4_Geometry.h\"")
 
 k2Index = cpp.lower().find("k2")
 if k2Index != -1:
